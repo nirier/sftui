@@ -18,7 +18,16 @@ A terminal-based SFTP client with dual panes for local and remote file browsing,
 
 ## Platform Support
 
-This application has been tested on macOS. It should also work on Linux and Windows if you can successfully build it, as it uses cross-platform Rust libraries.
+GitHub Releases provide prebuilt binaries for these platforms:
+
+| Platform | Archive |
+| --- | --- |
+| Linux x86_64 (glibc) | `sftui-x86_64-unknown-linux-gnu.tar.gz` |
+| Linux x86_64 (musl, statically linked) | `sftui-x86_64-unknown-linux-musl.tar.gz` |
+| macOS x86_64 | `sftui-x86_64-apple-darwin.tar.gz` |
+| Windows x86_64 | `sftui-x86_64-pc-windows-msvc.zip` |
+
+The glibc build requires a compatible Linux distribution. Use the musl build when you need a statically linked Linux executable.
 
 ## Requirements
 
@@ -35,6 +44,10 @@ This application has been tested on macOS. It should also work on Linux and Wind
   Without ssh-agent, only password authentication or unencrypted SSH keys will work.
 
 ## Installation
+
+### From GitHub Releases
+
+Download the archive for your platform from the [Releases page](https://github.com/nirier/sftui/releases), extract it, and run `sftui` (or `sftui.exe` on Windows). Keep the DLLs from the Windows archive beside `sftui.exe`.
 
 ### From crates.io
 
