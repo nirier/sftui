@@ -47,7 +47,7 @@ The glibc build requires a compatible Linux distribution. Use the musl build whe
 
 ### From GitHub Releases
 
-Download the archive for your platform from the [Releases page](https://github.com/nirier/sftui/releases), extract it, and run `sftui` (or `sftui.exe` on Windows). Keep the DLLs from the Windows archive beside `sftui.exe`.
+Download the archive for your platform from the [Releases page](https://github.com/nirier/sftui/releases), extract it, and run `sftui` (or `sftui.exe` on Windows).
 
 ### From crates.io
 
