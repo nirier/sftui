@@ -116,7 +116,8 @@ cargo install --path .
 - The application reads SSH hosts from `~/.ssh/config`
 - You can specify a host at startup: `sftui -H hostname`
 - In connection dialog:
-  - **↑/↓**: Navigate host list
+  - **↑/↓** or **j/k**: Navigate host list
+  - **g/G**: Jump to the first/last host
   - **Enter**: Connect to selected host
   - **Esc**: Cancel
 

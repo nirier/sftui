@@ -359,15 +359,21 @@ impl App {
             KeyCode::Esc => {
                 self.show_connection_dialog = false;
             }
-            KeyCode::Up => {
+            KeyCode::Up | KeyCode::Char('k') | KeyCode::Char('K') => {
                 if self.connection_cursor > 0 {
                     self.connection_cursor -= 1;
                 }
             }
-            KeyCode::Down => {
+            KeyCode::Down | KeyCode::Char('j') | KeyCode::Char('J') => {
                 if self.connection_cursor < self.available_hosts.len().saturating_sub(1) {
                     self.connection_cursor += 1;
                 }
+            }
+            KeyCode::Char('g') => {
+                self.connection_cursor = 0;
+            }
+            KeyCode::Char('G') => {
+                self.connection_cursor = self.available_hosts.len().saturating_sub(1);
             }
             KeyCode::Enter => {
                 if let Some(host) = self.available_hosts.get(self.connection_cursor).cloned() {

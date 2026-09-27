@@ -318,7 +318,11 @@ impl Ui {
             .collect();
 
         let list = List::new(hosts)
-            .block(Block::default().borders(Borders::ALL).title("Select Host"))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Select Host (j/k: move, g/G: top/bottom)"),
+            )
             .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
             .highlight_symbol("> ");
 
