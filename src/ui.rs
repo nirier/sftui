@@ -15,7 +15,7 @@ use std::collections::HashSet;
 use std::io;
 use std::path::Path;
 
-use crate::app::{App, Pane, TransferItem};
+use crate::app::{App, Bookmark, Pane, SyncDirection, TransferItem};
 use crate::sftp::FileInfo;
 use crate::ssh_config::SshHost;
 
@@ -36,7 +36,7 @@ impl Ui {
 
     pub fn draw(&mut self, app: &App) -> Result<()> {
         let current_host = app.current_host.clone();
-        let active_pane = app.active_pane.clone();
+        let active_pane = app.active_pane;
         let local_path = app.local_path.clone();
         let remote_path = app.remote_path.clone();
         let local_cursor = app.local_cursor;
@@ -48,6 +48,16 @@ impl Ui {
         let available_hosts = app.available_hosts.clone();
         let connection_cursor = app.connection_cursor;
         let transfer_queue = app.transfer_queue.clone();
+        let show_bookmark_dialog = app.show_bookmark_dialog;
+        let bookmarks = app.bookmarks.clone();
+        let bookmark_cursor = app.bookmark_cursor;
+        let bookmark_editing = app.bookmark_editing;
+        let bookmark_name = app.bookmark_name.clone();
+        let show_sync_dialog = app.show_sync_dialog;
+        let sync_direction = app.sync_direction;
+        let sync_dry_run = app.sync_dry_run;
+        let sync_completed = app.sync_completed;
+        let sync_output = app.sync_output.clone();
 
         self.terminal.draw(move |f| {
             let chunks = Layout::default()
@@ -84,6 +94,26 @@ impl Ui {
 
             if show_transfer_dialog {
                 Ui::draw_transfer_dialog(f, &transfer_queue);
+            }
+
+            if show_bookmark_dialog {
+                Ui::draw_bookmark_dialog(
+                    f,
+                    &bookmarks,
+                    bookmark_cursor,
+                    bookmark_editing,
+                    &bookmark_name,
+                );
+            }
+
+            if show_sync_dialog {
+                Ui::draw_sync_dialog(
+                    f,
+                    sync_direction,
+                    sync_dry_run,
+                    sync_completed,
+                    &sync_output,
+                );
             }
         })?;
 
@@ -242,10 +272,14 @@ impl Ui {
         } else {
             [
                 "Tab: Switch panes",
-                "Space: Select/deselect",
-                "Enter: Change directory",
+                "j/k or ↑/↓: Move",
+                "h: Parent | l/Enter: Open",
+                "g/G: Top/bottom",
+                "Space: Select",
                 "T: Transfer files",
                 "C: Change connection",
+                "M: Save bookmark | B: Bookmarks",
+                "S: Sync",
                 "/: Search",
                 "Q: Quit",
             ]
@@ -324,6 +358,107 @@ impl Ui {
             .style(Style::default().fg(Color::Yellow));
 
         f.render_widget(list, area);
+    }
+
+    fn draw_bookmark_dialog(
+        f: &mut Frame,
+        bookmarks: &[Bookmark],
+        bookmark_cursor: usize,
+        editing: bool,
+        bookmark_name: &str,
+    ) {
+        let area = Ui::centered_rect(85, 55, f.area());
+        f.render_widget(Clear, area);
+
+        if editing {
+            let input = Paragraph::new(format!(
+                "Bookmark name: {}\n\nEnter: Save/update | Esc: Cancel",
+                bookmark_name
+            ))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Save Bookmark"),
+            )
+            .style(Style::default().fg(Color::Yellow));
+            f.render_widget(input, area);
+            return;
+        }
+
+        let items: Vec<ListItem> = if bookmarks.is_empty() {
+            vec![ListItem::new("No bookmarks. Press a to add one.")]
+        } else {
+            bookmarks
+                .iter()
+                .map(|bookmark| {
+                    let host = bookmark.host.as_deref().unwrap_or("not connected");
+                    ListItem::new(format!(
+                        "{}  |  local: {}  |  remote: {}  |  host: {}",
+                        bookmark.name,
+                        bookmark.local_path.display(),
+                        bookmark.remote_path.display(),
+                        host
+                    ))
+                })
+                .collect()
+        };
+
+        let list = List::new(items)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Bookmarks (Enter: restore, a/m: add, d: delete, Esc: close)"),
+            )
+            .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
+            .highlight_symbol("> ");
+
+        let mut state = ListState::default();
+        if !bookmarks.is_empty() {
+            state.select(Some(bookmark_cursor));
+        }
+        f.render_stateful_widget(list, area, &mut state);
+    }
+
+    fn draw_sync_dialog(
+        f: &mut Frame,
+        direction: SyncDirection,
+        dry_run: bool,
+        completed: bool,
+        output: &str,
+    ) {
+        let area = Ui::centered_rect(85, 65, f.area());
+        f.render_widget(Clear, area);
+
+        let direction = match direction {
+            SyncDirection::LocalToRemote => "Local -> Remote",
+            SyncDirection::RemoteToLocal => "Remote -> Local",
+        };
+        let body = if completed {
+            format!("rsync result:\n\n{output}\n\nEnter/Esc: Close")
+        } else {
+            format!(
+                "Direction: {direction}\nDry-run: {}\n\nLeft/Right or Tab: Change direction\nd: Toggle dry-run\nEnter: Run rsync\nEsc: Cancel\n\nThe destination will be made an exact mirror with --delete.",
+                if dry_run {
+                    "ON (safe preview)"
+                } else {
+                    "OFF (writes/deletes files)"
+                }
+            )
+        };
+
+        let paragraph = Paragraph::new(body)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Directory Sync"),
+            )
+            .style(Style::default().fg(if completed {
+                Color::Green
+            } else {
+                Color::Yellow
+            }))
+            .wrap(ratatui::widgets::Wrap { trim: false });
+        f.render_widget(paragraph, area);
     }
 
     fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {

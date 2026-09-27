@@ -69,8 +69,13 @@ cargo install --path .
 
 - **Tab**: Switch between local and remote panes
 - **↑/↓** or **j/k**: Navigate file list (vim-style navigation supported)
-- **Enter**: Enter directory (when on a directory)
+- **h**: Go to the parent directory
+- **l** or **Enter**: Enter the selected directory
+- **g/G**: Jump to the first/last entry
 - **Space**: Select/deselect files for transfer
+- **m**: Save the current local/remote directory layout as a bookmark
+- **b**: Open bookmarks and restore a saved layout
+- **s**: Open directory synchronization
 - **q** or **Q**: Quit application
 
 ### Search Function
@@ -85,8 +90,25 @@ cargo install --path .
 ### Directory Navigation
 
 - **..** entry appears at the top of directory listings (except at root)
-- Navigate up one level by selecting **..** and pressing **Enter**
+- Press **h** to go up one level, or select **..** and press **Enter**
+- Press **l** to enter the selected directory
 - Standard Unix-style directory navigation
+
+### Bookmarks
+
+- Bookmarks save both panel paths, the connected SSH host, and the active panel.
+- Press **m**, enter a name, and press **Enter** to save or update a bookmark.
+- Press **b** to select a bookmark; **Enter** restores both directories and reconnects to its host when needed.
+- In the bookmark list, **a** or **m** adds a bookmark and **d** deletes the selected bookmark.
+- Bookmarks are stored in `~/.config/sftui/bookmarks.json`.
+
+### Directory Synchronization
+
+- Press **s** to open synchronization for the current local and remote directories.
+- Choose **Local -> Remote** or **Remote -> Local** with **Left/Right** or **Tab**.
+- Synchronization uses `rsync --archive --delete --checksum --itemize-changes`, so the destination becomes an exact mirror of the source.
+- **Dry-run** is enabled by default. Press **d** to toggle it, then press **Enter** to run.
+- `rsync` and an SSH configuration that can connect to the current host are required.
 
 ### Connection Management
 
@@ -131,6 +153,7 @@ Host another-server
 - **ssh2**: SSH/SFTP protocol implementation
 - **tokio**: Async runtime
 - **anyhow**: Error handling
+- **serde / serde_json**: Bookmark persistence
 - **clap**: Command line argument parsing
 - **dirs**: Directory utilities
 
@@ -140,8 +163,13 @@ Host another-server
 | ---------- | --------------------------------- |
 | Tab        | Switch panes                      |
 | ↑/↓ or j/k | Navigate up/down                  |
-| Enter      | Enter directory                   |
+| h          | Go to parent directory             |
+| l or Enter | Enter selected directory           |
+| g/G        | Jump to first/last entry           |
 | Space      | Select/deselect                   |
+| m          | Save bookmark                     |
+| b          | Open bookmarks                    |
+| s          | Directory synchronization         |
 | /          | Start search                      |
 | t or T     | Transfer dialog                   |
 | c or C     | Connection dialog                 |
