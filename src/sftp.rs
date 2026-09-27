@@ -1,6 +1,7 @@
 use crate::ssh_config::{SshConfig, SshHost};
 use anyhow::{Result, anyhow};
 use ssh2::{Channel, Session, Sftp};
+use std::env;
 use std::fs;
 use std::io::prelude::*;
 use std::net::TcpStream;
@@ -32,6 +33,21 @@ pub struct SftpClient {
     #[cfg(unix)]
     _proxy_threads: Option<ProxyThreads>,
     sftp: Sftp,
+}
+
+/// OpenSSH uses the local account name when a host does not specify `User`.
+/// Keep the same behavior for hosts loaded from `~/.ssh/config`.
+fn username_for(host_config: &SshHost) -> Result<String> {
+    if let Some(user) = host_config.user.as_deref().filter(|user| !user.is_empty()) {
+        return Ok(user.to_owned());
+    }
+
+    ["USER", "USERNAME"]
+        .iter()
+        .find_map(|name| env::var(name).ok().filter(|user| !user.is_empty()))
+        .ok_or_else(|| {
+            anyhow!("No username specified and the current username could not be determined")
+        })
 }
 
 #[cfg(unix)]
@@ -66,10 +82,7 @@ impl SftpClient {
     fn connect_direct(host_config: &SshHost) -> Result<Self> {
         let hostname = host_config.hostname.as_ref().unwrap_or(&host_config.host);
         let port = host_config.port.unwrap_or(22);
-        let user = host_config
-            .user
-            .as_ref()
-            .ok_or_else(|| anyhow!("No username specified"))?;
+        let user = username_for(host_config)?;
 
         let tcp = TcpStream::connect(format!("{hostname}:{port}"))?;
         let mut session = Session::new()?;
@@ -81,15 +94,15 @@ impl SftpClient {
             // Try public key authentication with the identity file
             // Note: For PEM files and standard SSH keys, we don't need the .pub file
             // The public key can be derived from the private key
-            session.userauth_pubkey_file(user, None, identity_file, None)
+            session.userauth_pubkey_file(&user, None, identity_file, None)
         } else {
             // No identity file specified, use ssh-agent
-            session.userauth_agent(user)
+            session.userauth_agent(&user)
         };
 
         // If identity file auth failed, try ssh-agent as fallback
         if auth_result.is_err() {
-            session.userauth_agent(user)?;
+            session.userauth_agent(&user)?;
         }
 
         if !session.authenticated() {
@@ -125,10 +138,7 @@ impl SftpClient {
             ));
         }
 
-        let bastion_user = bastion_config
-            .user
-            .as_ref()
-            .ok_or_else(|| anyhow!("No username specified for bastion host"))?;
+        let bastion_user = username_for(bastion_config)?;
 
         let bastion_tcp = TcpStream::connect(format!("{bastion_hostname}:{bastion_port}"))?;
         let mut bastion_session = Session::new()?;
@@ -140,13 +150,13 @@ impl SftpClient {
             // Try public key authentication with the identity file
             // Note: For PEM files and standard SSH keys, we don't need the .pub file
             // The public key can be derived from the private key
-            bastion_session.userauth_pubkey_file(bastion_user, None, identity_file, None)
+            bastion_session.userauth_pubkey_file(&bastion_user, None, identity_file, None)
         } else {
-            bastion_session.userauth_agent(bastion_user)
+            bastion_session.userauth_agent(&bastion_user)
         };
 
         if auth_result.is_err() {
-            bastion_session.userauth_agent(bastion_user)?;
+            bastion_session.userauth_agent(&bastion_user)?;
         }
 
         if !bastion_session.authenticated() {
@@ -187,22 +197,19 @@ impl SftpClient {
         target_session.handshake()?;
 
         // Authenticate to target host
-        let target_user = host_config
-            .user
-            .as_ref()
-            .ok_or_else(|| anyhow!("No username specified for target host"))?;
+        let target_user = username_for(host_config)?;
 
         let auth_result = if let Some(identity_file) = &host_config.identity_file {
             // Try public key authentication with the identity file
             // Note: For PEM files and standard SSH keys, we don't need the .pub file
             // The public key can be derived from the private key
-            target_session.userauth_pubkey_file(target_user, None, identity_file, None)
+            target_session.userauth_pubkey_file(&target_user, None, identity_file, None)
         } else {
-            target_session.userauth_agent(target_user)
+            target_session.userauth_agent(&target_user)
         };
 
         if auth_result.is_err() {
-            target_session.userauth_agent(target_user)?;
+            target_session.userauth_agent(&target_user)?;
         }
 
         if !target_session.authenticated() {
