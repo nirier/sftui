@@ -1,5 +1,7 @@
 use anyhow::{Result, anyhow};
 use crossterm::event::{Event, KeyCode};
+use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
+use nucleo_matcher::{Config as MatcherConfig, Matcher};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::env;
@@ -90,6 +92,7 @@ pub struct App {
     pub search_query: String,
     search_scope: ActionMode,
     search_pane: Pane,
+    search_matcher: Matcher,
     pub filtered_local_files: Vec<FileInfo>,
     pub filtered_remote_files: Vec<FileInfo>,
 
@@ -144,6 +147,7 @@ impl App {
             search_query: String::new(),
             search_scope: ActionMode::Single,
             search_pane: Pane::Local,
+            search_matcher: Matcher::new(MatcherConfig::DEFAULT),
             filtered_local_files: Vec::new(),
             filtered_remote_files: Vec::new(),
 
@@ -600,6 +604,7 @@ impl App {
                 name: "..".to_string(),
                 path: parent.to_path_buf(),
                 is_dir: true,
+                is_symlink: false,
                 size: 0,
                 permissions: 0o755,
             });
@@ -608,7 +613,8 @@ impl App {
         for entry in fs::read_dir(&self.local_path)? {
             let entry = entry?;
             let path = entry.path();
-            let metadata = entry.metadata()?;
+            let symlink_metadata = fs::symlink_metadata(&path)?;
+            let target_metadata = entry.metadata().ok();
 
             let name = path
                 .file_name()
@@ -619,9 +625,12 @@ impl App {
             self.local_files.push(FileInfo {
                 name,
                 path,
-                is_dir: metadata.is_dir(),
-                size: metadata.len(),
-                permissions: 0o755,
+                is_symlink: symlink_metadata.file_type().is_symlink(),
+                is_dir: target_metadata.as_ref().is_some_and(fs::Metadata::is_dir),
+                size: target_metadata
+                    .as_ref()
+                    .map_or(symlink_metadata.len(), fs::Metadata::len),
+                permissions: file_permissions(&symlink_metadata),
             });
         }
 
@@ -660,6 +669,7 @@ impl App {
                         name: "..".to_string(),
                         path: parent.to_path_buf(),
                         is_dir: true,
+                        is_symlink: false,
                         size: 0,
                         permissions: 0o755,
                     },
@@ -937,24 +947,16 @@ impl App {
             return;
         }
 
-        let query = self.search_query.to_lowercase();
+        let query = self.search_query.clone();
 
         if self.search_scope == ActionMode::Dual || self.search_pane == Pane::Local {
-            self.filtered_local_files = self
-                .local_files
-                .iter()
-                .filter(|file| file.name.to_lowercase().contains(&query))
-                .cloned()
-                .collect();
+            self.filtered_local_files =
+                fuzzy_filter_files(&self.local_files, &query, &mut self.search_matcher);
         }
 
         if self.search_scope == ActionMode::Dual || self.search_pane == Pane::Remote {
-            self.filtered_remote_files = self
-                .remote_files
-                .iter()
-                .filter(|file| file.name.to_lowercase().contains(&query))
-                .cloned()
-                .collect();
+            self.filtered_remote_files =
+                fuzzy_filter_files(&self.remote_files, &query, &mut self.search_matcher);
         }
     }
 
@@ -981,6 +983,42 @@ impl App {
         } else {
             &self.remote_files
         }
+    }
+}
+
+fn fuzzy_filter_files(files: &[FileInfo], query: &str, matcher: &mut Matcher) -> Vec<FileInfo> {
+    let pattern = Pattern::parse(query, CaseMatching::Ignore, Normalization::Smart);
+    let mut matches = files
+        .iter()
+        .filter_map(|file| {
+            let mut chars = Vec::new();
+            let haystack = nucleo_matcher::Utf32Str::new(&file.name, &mut chars);
+            pattern
+                .score(haystack, matcher)
+                .map(|score| (score, file.clone()))
+        })
+        .collect::<Vec<_>>();
+
+    matches.sort_by(|(left_score, left_file), (right_score, right_file)| {
+        right_score
+            .cmp(left_score)
+            .then_with(|| left_file.name.cmp(&right_file.name))
+    });
+    matches.into_iter().map(|(_, file)| file).collect()
+}
+
+#[cfg(unix)]
+fn file_permissions(metadata: &fs::Metadata) -> u32 {
+    use std::os::unix::fs::PermissionsExt;
+    metadata.permissions().mode()
+}
+
+#[cfg(not(unix))]
+fn file_permissions(metadata: &fs::Metadata) -> u32 {
+    if metadata.permissions().readonly() {
+        0o444
+    } else {
+        0o666
     }
 }
 
@@ -1044,6 +1082,34 @@ mod tests {
             "/tmp/source/"
         );
         assert_eq!(path_with_trailing_slash(Path::new("/")), "/");
+    }
+
+    #[test]
+    fn test_fuzzy_filter_matches_non_contiguous_characters() {
+        let files = vec![
+            FileInfo {
+                name: "notes.txt".to_string(),
+                path: PathBuf::from("/tmp/notes.txt"),
+                is_dir: false,
+                is_symlink: false,
+                size: 0,
+                permissions: 0o644,
+            },
+            FileInfo {
+                name: "README.md".to_string(),
+                path: PathBuf::from("/tmp/README.md"),
+                is_dir: false,
+                is_symlink: false,
+                size: 0,
+                permissions: 0o644,
+            },
+        ];
+        let mut matcher = Matcher::new(MatcherConfig::DEFAULT);
+
+        let matches = fuzzy_filter_files(&files, "rmd", &mut matcher);
+
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].name, "README.md");
     }
 
     #[test]

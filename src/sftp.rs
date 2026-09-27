@@ -20,6 +20,7 @@ pub struct FileInfo {
     pub name: String,
     pub path: PathBuf,
     pub is_dir: bool,
+    pub is_symlink: bool,
     #[allow(dead_code)]
     pub size: u64,
     #[allow(dead_code)]
@@ -327,13 +328,15 @@ impl SftpClient {
                 .to_string();
 
             let is_dir = stat.is_dir();
-            let size = stat.size.unwrap_or(0);
             let permissions = stat.perm.unwrap_or(0);
+            let is_symlink = permissions & 0o170000 == 0o120000;
+            let size = stat.size.unwrap_or(0);
 
             files.push(FileInfo {
                 name,
                 path: path_buf,
                 is_dir,
+                is_symlink,
                 size,
                 permissions,
             });
@@ -422,6 +425,7 @@ mod tests {
             name: "test.txt".to_string(),
             path: PathBuf::from("/home/user/test.txt"),
             is_dir: false,
+            is_symlink: false,
             size: 1024,
             permissions: 0o644,
         };
@@ -439,6 +443,7 @@ mod tests {
             name: "documents".to_string(),
             path: PathBuf::from("/home/user/documents"),
             is_dir: true,
+            is_symlink: false,
             size: 4096,
             permissions: 0o755,
         };
@@ -453,6 +458,7 @@ mod tests {
             name: "file.rs".to_string(),
             path: PathBuf::from("/project/src/file.rs"),
             is_dir: false,
+            is_symlink: false,
             size: 2048,
             permissions: 0o644,
         };
@@ -461,6 +467,7 @@ mod tests {
         assert_eq!(original.name, cloned.name);
         assert_eq!(original.path, cloned.path);
         assert_eq!(original.is_dir, cloned.is_dir);
+        assert_eq!(original.is_symlink, cloned.is_symlink);
         assert_eq!(original.size, cloned.size);
         assert_eq!(original.permissions, cloned.permissions);
     }

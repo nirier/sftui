@@ -84,11 +84,19 @@ cargo install --path .
 
 - **/** : Start search mode
 - Search follows the current action mode: single mode searches the active pane, dual mode searches both panes.
-- **Type**: Enter search query (case-insensitive)
+- **Type**: Enter a fuzzy search query (case-insensitive, fzf-style matching and ranking)
 - **Backspace**: Delete characters from search
 - **Enter**: Exit search mode and keep filtered results; navigation actions such as **l** can then enter a matching directory
 - **Esc**: Cancel search and return to full listing
 - **Real-time filtering**: Results update as you type
+
+### File Colors and Type Suffixes
+
+- File colors follow the `LS_COLORS` environment variable, with standard defaults when it is not set.
+- Directories end with `/`.
+- Symbolic links end with `@`.
+- Executable files end with `*`.
+- The same colors and suffixes are used for local and remote listings.
 
 ### Directory Navigation
 

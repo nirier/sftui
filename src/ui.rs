@@ -4,14 +4,17 @@ use crossterm::{
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
+use lscolors::{Color as LsColor, Indicator, LsColors, Style as LsStyle};
 use ratatui::{
     Frame, Terminal,
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
+    text::{Line, Span},
     widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph},
 };
 use std::collections::HashSet;
+use std::fs;
 use std::io;
 use std::path::Path;
 
@@ -59,6 +62,7 @@ impl Ui {
         let sync_dry_run = app.sync_dry_run;
         let sync_completed = app.sync_completed;
         let sync_output = app.sync_output.clone();
+        let lscolors = LsColors::from_env().unwrap_or_default();
 
         self.terminal.draw(move |f| {
             let chunks = Layout::default()
@@ -86,6 +90,7 @@ impl Ui {
                 remote_cursor,
                 &local_selected,
                 &remote_selected,
+                &lscolors,
             );
             Ui::draw_footer(
                 f,
@@ -153,6 +158,7 @@ impl Ui {
         remote_cursor: usize,
         local_selected: &HashSet<usize>,
         remote_selected: &HashSet<usize>,
+        lscolors: &LsColors,
     ) {
         let panes = Layout::default()
             .direction(Direction::Horizontal)
@@ -167,6 +173,7 @@ impl Ui {
             local_files,
             local_cursor,
             local_selected,
+            lscolors,
         );
         Ui::draw_remote_pane(
             f,
@@ -176,9 +183,11 @@ impl Ui {
             remote_files,
             remote_cursor,
             remote_selected,
+            lscolors,
         );
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn draw_local_pane(
         f: &mut Frame,
         area: Rect,
@@ -187,6 +196,7 @@ impl Ui {
         local_files: &[FileInfo],
         local_cursor: usize,
         local_selected: &HashSet<usize>,
+        lscolors: &LsColors,
     ) {
         let title = format!("Local: {} ({})", local_path.display(), local_files.len());
         let style = if *active_pane == Pane::Local {
@@ -199,15 +209,14 @@ impl Ui {
             .iter()
             .enumerate()
             .map(|(i, file)| {
-                let prefix = " ";
-                let name = format!("{}{}", prefix, file.name);
-                let mut item_style = Style::default();
+                let name = format!(" {}", display_name(file));
+                let mut item_style = style_for_file(lscolors, file, true);
 
                 if local_selected.contains(&i) {
                     item_style = item_style.bg(Color::Blue);
                 }
 
-                ListItem::new(name).style(item_style)
+                ListItem::new(Line::from(Span::styled(name, item_style)))
             })
             .collect();
 
@@ -226,6 +235,7 @@ impl Ui {
         f.render_stateful_widget(list, area, &mut state);
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn draw_remote_pane(
         f: &mut Frame,
         area: Rect,
@@ -234,6 +244,7 @@ impl Ui {
         remote_files: &[FileInfo],
         remote_cursor: usize,
         remote_selected: &HashSet<usize>,
+        lscolors: &LsColors,
     ) {
         let title = format!("Remote: {} ({})", remote_path.display(), remote_files.len());
         let style = if *active_pane == Pane::Remote {
@@ -246,15 +257,14 @@ impl Ui {
             .iter()
             .enumerate()
             .map(|(i, file)| {
-                let prefix = " ";
-                let name = format!("{}{}", prefix, file.name);
-                let mut item_style = Style::default();
+                let name = format!(" {}", display_name(file));
+                let mut item_style = style_for_file(lscolors, file, false);
 
                 if remote_selected.contains(&i) {
                     item_style = item_style.bg(Color::Blue);
                 }
 
-                ListItem::new(name).style(item_style)
+                ListItem::new(Line::from(Span::styled(name, item_style)))
             })
             .collect();
 
@@ -524,5 +534,106 @@ impl Drop for Ui {
             LeaveAlternateScreen,
             DisableMouseCapture
         );
+    }
+}
+
+fn display_name(file: &FileInfo) -> String {
+    let suffix = if file.is_symlink {
+        "@"
+    } else if file.is_dir {
+        "/"
+    } else if file.permissions & 0o111 != 0 {
+        "*"
+    } else {
+        ""
+    };
+    format!("{}{}", file.name, suffix)
+}
+
+fn style_for_file(lscolors: &LsColors, file: &FileInfo, local: bool) -> Style {
+    let ls_style = if local {
+        fs::symlink_metadata(&file.path)
+            .ok()
+            .and_then(|metadata| lscolors.style_for_path_with_metadata(&file.path, Some(&metadata)))
+    } else {
+        let indicator = if file.is_symlink {
+            Indicator::SymbolicLink
+        } else if file.is_dir {
+            Indicator::Directory
+        } else if file.permissions & 0o111 != 0 {
+            Indicator::ExecutableFile
+        } else {
+            Indicator::RegularFile
+        };
+        if indicator == Indicator::RegularFile {
+            lscolors
+                .style_for_str(&file.name)
+                .or_else(|| lscolors.style_for_indicator(indicator))
+        } else {
+            lscolors.style_for_indicator(indicator)
+        }
+    };
+
+    ls_style.map(to_ratatui_style).unwrap_or_default()
+}
+
+fn to_ratatui_style(style: &LsStyle) -> Style {
+    let mut ratatui_style = Style::default();
+    if let Some(color) = style.foreground {
+        ratatui_style = ratatui_style.fg(to_ratatui_color(color));
+    }
+    if let Some(color) = style.background {
+        ratatui_style = ratatui_style.bg(to_ratatui_color(color));
+    }
+    if let Some(color) = style.underline {
+        ratatui_style = ratatui_style.underline_color(to_ratatui_color(color));
+    }
+
+    let font = style.font_style;
+    let mut modifiers = Modifier::empty();
+    if font.bold {
+        modifiers |= Modifier::BOLD;
+    }
+    if font.dimmed {
+        modifiers |= Modifier::DIM;
+    }
+    if font.italic {
+        modifiers |= Modifier::ITALIC;
+    }
+    if font.underline {
+        modifiers |= Modifier::UNDERLINED;
+    }
+    if font.reverse {
+        modifiers |= Modifier::REVERSED;
+    }
+    if font.hidden {
+        modifiers |= Modifier::HIDDEN;
+    }
+    if font.strikethrough {
+        modifiers |= Modifier::CROSSED_OUT;
+    }
+    ratatui_style.add_modifier(modifiers)
+}
+
+fn to_ratatui_color(color: LsColor) -> Color {
+    match color {
+        LsColor::Black => Color::Black,
+        LsColor::Red => Color::Red,
+        LsColor::Green => Color::Green,
+        LsColor::Yellow => Color::Yellow,
+        LsColor::Blue => Color::Blue,
+        LsColor::Magenta => Color::Magenta,
+        LsColor::Cyan => Color::Cyan,
+        LsColor::White => Color::Gray,
+        LsColor::BrightBlack => Color::DarkGray,
+        LsColor::BrightRed => Color::Red,
+        LsColor::BrightGreen => Color::Green,
+        LsColor::BrightYellow => Color::Yellow,
+        LsColor::BrightBlue => Color::Blue,
+        LsColor::BrightMagenta => Color::Magenta,
+        LsColor::BrightCyan => Color::Cyan,
+        LsColor::BrightWhite => Color::White,
+        LsColor::Fixed(value) => Color::Indexed(value),
+        LsColor::RGB(red, green, blue) => Color::Rgb(red, green, blue),
     }
 }
