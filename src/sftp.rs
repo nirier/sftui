@@ -50,6 +50,70 @@ fn username_for(host_config: &SshHost) -> Result<String> {
         })
 }
 
+fn ssh_agent_available() -> bool {
+    env::var_os("SSH_AUTH_SOCK")
+        .map(|socket| !socket.is_empty())
+        .unwrap_or(false)
+}
+
+fn identity_candidates(identity_file: Option<&Path>) -> Vec<PathBuf> {
+    if let Some(identity_file) = identity_file {
+        let path = identity_file.to_string_lossy();
+        if let Some(home) = dirs::home_dir() {
+            if path == "~" {
+                return vec![home];
+            }
+            if let Some(relative) = path.strip_prefix("~/") {
+                return vec![home.join(relative)];
+            }
+        }
+        return vec![identity_file.to_path_buf()];
+    }
+
+    let Some(home) = dirs::home_dir() else {
+        return Vec::new();
+    };
+
+    ["id_ed25519", "id_ecdsa", "id_rsa", "id_dsa"]
+        .into_iter()
+        .map(|name| home.join(".ssh").join(name))
+        .collect()
+}
+
+fn authenticate(session: &mut Session, user: &str, identity_file: Option<&Path>) -> Result<()> {
+    let mut errors = Vec::new();
+
+    for identity in identity_candidates(identity_file) {
+        if !identity.is_file() {
+            continue;
+        }
+
+        match session.userauth_pubkey_file(user, None, &identity, None) {
+            Ok(()) if session.authenticated() => return Ok(()),
+            Ok(()) => errors.push(format!(
+                "key authentication did not authenticate with {}",
+                identity.display()
+            )),
+            Err(error) => errors.push(format!("{}: {error}", identity.display())),
+        }
+    }
+
+    if ssh_agent_available() {
+        match session.userauth_agent(user) {
+            Ok(()) if session.authenticated() => return Ok(()),
+            Ok(()) => errors.push("ssh-agent did not authenticate".to_string()),
+            Err(error) => errors.push(format!("ssh-agent: {error}")),
+        }
+    }
+
+    let detail = if errors.is_empty() {
+        "no usable identity file or SSH agent was found".to_string()
+    } else {
+        errors.join("; ")
+    };
+    Err(anyhow!("Authentication failed for user '{user}': {detail}"))
+}
+
 #[cfg(unix)]
 struct ProxyThreads {
     #[allow(dead_code)]
@@ -89,25 +153,7 @@ impl SftpClient {
         session.set_tcp_stream(tcp);
         session.handshake()?;
 
-        // Try authentication methods
-        let auth_result = if let Some(identity_file) = &host_config.identity_file {
-            // Try public key authentication with the identity file
-            // Note: For PEM files and standard SSH keys, we don't need the .pub file
-            // The public key can be derived from the private key
-            session.userauth_pubkey_file(&user, None, identity_file, None)
-        } else {
-            // No identity file specified, use ssh-agent
-            session.userauth_agent(&user)
-        };
-
-        // If identity file auth failed, try ssh-agent as fallback
-        if auth_result.is_err() {
-            session.userauth_agent(&user)?;
-        }
-
-        if !session.authenticated() {
-            return Err(anyhow!("Authentication failed"));
-        }
+        authenticate(&mut session, &user, host_config.identity_file.as_deref())?;
 
         let sftp = session.sftp()?;
 
@@ -145,23 +191,11 @@ impl SftpClient {
         bastion_session.set_tcp_stream(bastion_tcp);
         bastion_session.handshake()?;
 
-        // Authenticate to bastion
-        let auth_result = if let Some(identity_file) = &bastion_config.identity_file {
-            // Try public key authentication with the identity file
-            // Note: For PEM files and standard SSH keys, we don't need the .pub file
-            // The public key can be derived from the private key
-            bastion_session.userauth_pubkey_file(&bastion_user, None, identity_file, None)
-        } else {
-            bastion_session.userauth_agent(&bastion_user)
-        };
-
-        if auth_result.is_err() {
-            bastion_session.userauth_agent(&bastion_user)?;
-        }
-
-        if !bastion_session.authenticated() {
-            return Err(anyhow!("Authentication failed for bastion host"));
-        }
+        authenticate(
+            &mut bastion_session,
+            &bastion_user,
+            bastion_config.identity_file.as_deref(),
+        )?;
 
         // Set bastion session to non-blocking mode
         bastion_session.set_blocking(false);
@@ -199,22 +233,11 @@ impl SftpClient {
         // Authenticate to target host
         let target_user = username_for(host_config)?;
 
-        let auth_result = if let Some(identity_file) = &host_config.identity_file {
-            // Try public key authentication with the identity file
-            // Note: For PEM files and standard SSH keys, we don't need the .pub file
-            // The public key can be derived from the private key
-            target_session.userauth_pubkey_file(&target_user, None, identity_file, None)
-        } else {
-            target_session.userauth_agent(&target_user)
-        };
-
-        if auth_result.is_err() {
-            target_session.userauth_agent(&target_user)?;
-        }
-
-        if !target_session.authenticated() {
-            return Err(anyhow!("Authentication failed for target host"));
-        }
+        authenticate(
+            &mut target_session,
+            &target_user,
+            host_config.identity_file.as_deref(),
+        )?;
 
         let sftp = target_session.sftp()?;
 

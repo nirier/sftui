@@ -12,11 +12,6 @@ on:
         required: false
         default: false
         type: boolean
-      publish_crate:
-        description: 'Also publish to crates.io'
-        required: false
-        default: false
-        type: boolean
 
 permissions:
   contents: write
@@ -26,55 +21,6 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  publish-crate:
-    name: Publish to crates.io
-    if: github.event_name == 'push' || inputs.publish_crate
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
-    - uses: dtolnay/rust-toolchain@stable
-    - uses: Swatinem/rust-cache@v2
-      with:
-        save-if: false  # Don't save cache on release builds to avoid Cargo.lock issues
-    
-    - name: Setup tmate session
-      if: ${{ github.event_name == 'workflow_dispatch' && inputs.debug_enabled }}
-      uses: mxschmitt/action-tmate@v3
-    
-    - name: Verify version
-      run: |
-        # Use cargo metadata for more robust version extraction
-        cargo_version=$(cargo metadata --format-version 1 --no-deps | jq -r '.packages[0].version')
-        
-        # Skip version check for workflow_dispatch
-        if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-          echo "✅ Manual run - using version from Cargo.toml: $cargo_version"
-        else
-          tag_version="${GITHUB_REF#refs/tags/v}"
-          if [ "$cargo_version" != "$tag_version" ]; then
-            echo "Error: Cargo.toml version ($cargo_version) doesn't match tag version ($tag_version)"
-            exit 1
-          fi
-          echo "✅ Version verified: $cargo_version"
-        fi
-        
-    - name: Run tests
-      run: cargo test --all-features --verbose
-
-    - name: Check code formatting
-      run: cargo fmt --all -- --check
-
-    - name: Run Clippy
-      run: cargo clippy --all-targets --all-features -- -D warnings
-
-    - name: Verify package
-      run: cargo package --verbose --locked
-
-    - name: Publish to Crates.io
-      run: cargo publish --token ${{ secrets.CRATES_IO_TOKEN }}
-      env:
-        CRATES_IO_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
-
   build-binaries:
     name: Build ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
