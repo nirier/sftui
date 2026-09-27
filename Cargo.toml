@@ -1,6 +1,6 @@
 [package]
 name = "sftui"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2024"
 authors = ["wtnqk"]
 description = "A terminal UI SFTP client with dual-pane interface"

@@ -15,7 +15,7 @@ use std::collections::HashSet;
 use std::io;
 use std::path::Path;
 
-use crate::app::{App, Bookmark, Pane, SyncDirection, TransferItem};
+use crate::app::{ActionMode, App, Bookmark, Pane, SyncDirection, TransferItem};
 use crate::sftp::FileInfo;
 use crate::ssh_config::SshHost;
 
@@ -37,6 +37,7 @@ impl Ui {
     pub fn draw(&mut self, app: &App) -> Result<()> {
         let current_host = app.current_host.clone();
         let active_pane = app.active_pane;
+        let action_mode = app.action_mode;
         let local_path = app.local_path.clone();
         let remote_path = app.remote_path.clone();
         let local_cursor = app.local_cursor;
@@ -86,7 +87,13 @@ impl Ui {
                 &local_selected,
                 &remote_selected,
             );
-            Ui::draw_footer(f, chunks[2], app.search_mode, &app.search_query);
+            Ui::draw_footer(
+                f,
+                chunks[2],
+                app.search_mode,
+                &app.search_query,
+                action_mode,
+            );
 
             if show_connection_dialog {
                 Ui::draw_connection_dialog(f, &available_hosts, connection_cursor);
@@ -266,22 +273,33 @@ impl Ui {
         f.render_stateful_widget(list, area, &mut state);
     }
 
-    fn draw_footer(f: &mut Frame, area: Rect, search_mode: bool, search_query: &str) {
+    fn draw_footer(
+        f: &mut Frame,
+        area: Rect,
+        search_mode: bool,
+        search_query: &str,
+        action_mode: ActionMode,
+    ) {
         let footer_text = if search_mode {
             format!("Search: {search_query} | Esc: Cancel | Enter: Exit search")
         } else {
+            let mode = match action_mode {
+                ActionMode::Single => "Single",
+                ActionMode::Dual => "Dual",
+            };
             [
-                "Tab: Switch panes",
-                "j/k or ↑/↓: Move",
-                "h: Parent | l/Enter: Open",
-                "g/G: Top/bottom",
-                "Space: Select",
-                "T: Transfer files",
-                "C: Change connection",
-                "M: Save bookmark | B: Bookmarks",
-                "S: Sync",
-                "/: Search",
-                "Q: Quit",
+                "Tab: Switch panes".to_string(),
+                format!("A: Action mode ({mode})"),
+                "j/k or ↑/↓: Move".to_string(),
+                "h: Parent | l/Enter: Open".to_string(),
+                "g/G: Top/bottom".to_string(),
+                "Space: Select".to_string(),
+                "T: Transfer files".to_string(),
+                "C: Change connection".to_string(),
+                "M: Save bookmark | B: Bookmarks".to_string(),
+                "S: Sync".to_string(),
+                "/: Search".to_string(),
+                "Q: Quit".to_string(),
             ]
             .join(" | ")
         };

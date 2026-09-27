@@ -18,6 +18,12 @@ pub enum Pane {
     Remote,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActionMode {
+    Single,
+    Dual,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Bookmark {
     pub name: String,
@@ -53,6 +59,7 @@ pub struct App {
     pub available_hosts: Vec<SshHost>,
 
     pub active_pane: Pane,
+    pub action_mode: ActionMode,
     pub local_path: PathBuf,
     pub remote_path: PathBuf,
     pub local_files: Vec<FileInfo>,
@@ -81,6 +88,8 @@ pub struct App {
 
     pub search_mode: bool,
     pub search_query: String,
+    search_scope: ActionMode,
+    search_pane: Pane,
     pub filtered_local_files: Vec<FileInfo>,
     pub filtered_remote_files: Vec<FileInfo>,
 
@@ -102,6 +111,7 @@ impl App {
             available_hosts,
 
             active_pane: Pane::Local,
+            action_mode: ActionMode::Single,
             local_path,
             remote_path,
             local_files: Vec::new(),
@@ -132,6 +142,8 @@ impl App {
 
             search_mode: false,
             search_query: String::new(),
+            search_scope: ActionMode::Single,
+            search_pane: Pane::Local,
             filtered_local_files: Vec::new(),
             filtered_remote_files: Vec::new(),
 
@@ -198,34 +210,39 @@ impl App {
                     };
                 }
                 KeyCode::Up | KeyCode::Char('k') | KeyCode::Char('K') => {
-                    self.move_cursor_up();
+                    self.move_cursor_up(self.action_mode);
                 }
                 KeyCode::Down | KeyCode::Char('j') | KeyCode::Char('J') => {
-                    self.move_cursor_down();
+                    self.move_cursor_down(self.action_mode);
                 }
-                // Yazi/vim-style directory navigation.  These actions use the
-                // active pane, so the same bindings work for local and remote
-                // listings.
+                // Yazi/vim-style directory navigation. The action mode decides
+                // whether the binding applies to the active pane or both panes.
                 KeyCode::Char('h') | KeyCode::Char('H') => {
-                    self.go_to_parent_directory().await?;
+                    self.go_to_parent_directory(self.action_mode).await?;
                 }
                 KeyCode::Char('l') | KeyCode::Char('L') | KeyCode::Enter => {
-                    self.change_directory().await?;
+                    self.change_directory(self.action_mode).await?;
                 }
                 KeyCode::Char('g') => {
-                    self.move_cursor_top();
+                    self.move_cursor_top(self.action_mode);
                 }
                 KeyCode::Char('G') => {
-                    self.move_cursor_bottom();
+                    self.move_cursor_bottom(self.action_mode);
                 }
                 KeyCode::Char(' ') => {
-                    self.toggle_selection();
+                    self.toggle_selection(self.action_mode);
+                }
+                KeyCode::Char('a') | KeyCode::Char('A') => {
+                    self.action_mode = match self.action_mode {
+                        ActionMode::Single => ActionMode::Dual,
+                        ActionMode::Dual => ActionMode::Single,
+                    };
                 }
                 KeyCode::Char('c') | KeyCode::Char('C') => {
                     self.show_connection_dialog = true;
                 }
                 KeyCode::Char('t') | KeyCode::Char('T') => {
-                    self.prepare_transfer()?;
+                    self.prepare_transfer(self.action_mode)?;
                 }
                 KeyCode::Char('b') => {
                     self.show_bookmark_dialog = true;
@@ -250,7 +267,7 @@ impl App {
                     };
                 }
                 KeyCode::Char('/') => {
-                    self.start_search();
+                    self.start_search(self.action_mode);
                 }
                 _ => {}
             }
@@ -656,155 +673,183 @@ impl App {
         Ok(())
     }
 
-    fn move_cursor_up(&mut self) {
-        match self.active_pane {
-            Pane::Local => {
-                if self.local_cursor > 0 {
-                    self.local_cursor -= 1;
-                }
+    fn panes_for_mode(&self, mode: ActionMode) -> Vec<Pane> {
+        match mode {
+            ActionMode::Single => vec![self.active_pane],
+            ActionMode::Dual => vec![Pane::Local, Pane::Remote],
+        }
+    }
+
+    fn move_cursor_up(&mut self, mode: ActionMode) {
+        for pane in self.panes_for_mode(mode) {
+            match pane {
+                Pane::Local => self.local_cursor = self.local_cursor.saturating_sub(1),
+                Pane::Remote => self.remote_cursor = self.remote_cursor.saturating_sub(1),
             }
-            Pane::Remote => {
-                if self.remote_cursor > 0 {
-                    self.remote_cursor -= 1;
+        }
+    }
+
+    fn move_cursor_down(&mut self, mode: ActionMode) {
+        for pane in self.panes_for_mode(mode) {
+            match pane {
+                Pane::Local => {
+                    let files_len = self.get_current_local_files().len();
+                    self.local_cursor = (self.local_cursor + 1).min(files_len.saturating_sub(1));
+                }
+                Pane::Remote => {
+                    let files_len = self.get_current_remote_files().len();
+                    self.remote_cursor = (self.remote_cursor + 1).min(files_len.saturating_sub(1));
                 }
             }
         }
     }
 
-    fn move_cursor_down(&mut self) {
-        match self.active_pane {
-            Pane::Local => {
-                let files_len = self.get_current_local_files().len();
-                if self.local_cursor < files_len.saturating_sub(1) {
-                    self.local_cursor += 1;
-                }
-            }
-            Pane::Remote => {
-                let files_len = self.get_current_remote_files().len();
-                if self.remote_cursor < files_len.saturating_sub(1) {
-                    self.remote_cursor += 1;
-                }
+    fn move_cursor_top(&mut self, mode: ActionMode) {
+        for pane in self.panes_for_mode(mode) {
+            match pane {
+                Pane::Local => self.local_cursor = 0,
+                Pane::Remote => self.remote_cursor = 0,
             }
         }
     }
 
-    fn move_cursor_top(&mut self) {
-        match self.active_pane {
-            Pane::Local => self.local_cursor = 0,
-            Pane::Remote => self.remote_cursor = 0,
-        }
-    }
-
-    fn move_cursor_bottom(&mut self) {
-        match self.active_pane {
-            Pane::Local => {
-                self.local_cursor = self.get_current_local_files().len().saturating_sub(1);
-            }
-            Pane::Remote => {
-                self.remote_cursor = self.get_current_remote_files().len().saturating_sub(1);
-            }
-        }
-    }
-
-    async fn go_to_parent_directory(&mut self) -> Result<()> {
-        match self.active_pane {
-            Pane::Local => {
-                if let Some(parent) = self.local_path.parent()
-                    && parent != self.local_path
-                {
-                    self.local_path = parent.to_path_buf();
-                    self.reset_directory_view();
-                    self.refresh_local_files()?;
+    fn move_cursor_bottom(&mut self, mode: ActionMode) {
+        for pane in self.panes_for_mode(mode) {
+            match pane {
+                Pane::Local => {
+                    self.local_cursor = self.get_current_local_files().len().saturating_sub(1);
                 }
-            }
-            Pane::Remote => {
-                if let Some(parent) = self.remote_path.parent()
-                    && parent != self.remote_path
-                {
-                    self.remote_path = parent.to_path_buf();
-                    self.reset_directory_view();
-                    self.refresh_remote_files().await?;
+                Pane::Remote => {
+                    self.remote_cursor = self.get_current_remote_files().len().saturating_sub(1);
                 }
             }
         }
-
-        Ok(())
     }
 
     fn reset_directory_view(&mut self) {
         self.search_mode = false;
         self.search_query.clear();
+        self.search_scope = ActionMode::Single;
+        self.search_pane = self.active_pane;
         self.clear_search_filter();
     }
 
-    async fn change_directory(&mut self) -> Result<()> {
-        match self.active_pane {
-            Pane::Local => {
-                let files = self.get_current_local_files();
-                if let Some(file) = files.get(self.local_cursor)
-                    && file.is_dir
-                {
-                    self.local_path = file.path.clone();
-                    self.reset_directory_view();
-                    self.refresh_local_files()?;
-                }
-            }
-            Pane::Remote => {
-                let files = self.get_current_remote_files();
-                if let Some(file) = files.get(self.remote_cursor)
-                    && file.is_dir
-                {
-                    self.remote_path = file.path.clone();
-                    self.reset_directory_view();
-                    self.refresh_remote_files().await?;
-                }
-            }
+    async fn go_to_parent_directory(&mut self, mode: ActionMode) -> Result<()> {
+        let panes = self.panes_for_mode(mode);
+        let local_parent = if panes.contains(&Pane::Local) {
+            self.local_path
+                .parent()
+                .filter(|parent| *parent != self.local_path)
+                .map(Path::to_path_buf)
+        } else {
+            None
+        };
+        let remote_parent = if panes.contains(&Pane::Remote) {
+            self.remote_path
+                .parent()
+                .filter(|parent| *parent != self.remote_path)
+                .map(Path::to_path_buf)
+        } else {
+            None
+        };
+
+        if local_parent.is_some() || remote_parent.is_some() {
+            self.reset_directory_view();
+        }
+        if let Some(parent) = local_parent {
+            self.local_path = parent;
+            self.refresh_local_files()?;
+        }
+        if let Some(parent) = remote_parent {
+            self.remote_path = parent;
+            self.refresh_remote_files().await?;
         }
 
         Ok(())
     }
 
-    fn toggle_selection(&mut self) {
-        match self.active_pane {
-            Pane::Local => {
-                if self.local_selected.contains(&self.local_cursor) {
-                    self.local_selected.remove(&self.local_cursor);
-                } else {
-                    self.local_selected.insert(self.local_cursor);
+    async fn change_directory(&mut self, mode: ActionMode) -> Result<()> {
+        let panes = self.panes_for_mode(mode);
+        let local_target = if panes.contains(&Pane::Local) {
+            self.get_current_local_files()
+                .get(self.local_cursor)
+                .filter(|file| file.is_dir)
+                .map(|file| file.path.clone())
+        } else {
+            None
+        };
+        let remote_target = if panes.contains(&Pane::Remote) {
+            self.get_current_remote_files()
+                .get(self.remote_cursor)
+                .filter(|file| file.is_dir)
+                .map(|file| file.path.clone())
+        } else {
+            None
+        };
+
+        if local_target.is_some() || remote_target.is_some() {
+            self.reset_directory_view();
+        }
+        if let Some(path) = local_target {
+            self.local_path = path;
+            self.refresh_local_files()?;
+        }
+        if let Some(path) = remote_target {
+            self.remote_path = path;
+            self.refresh_remote_files().await?;
+        }
+
+        Ok(())
+    }
+
+    fn toggle_selection(&mut self, mode: ActionMode) {
+        for pane in self.panes_for_mode(mode) {
+            match pane {
+                Pane::Local => {
+                    if self.local_selected.contains(&self.local_cursor) {
+                        self.local_selected.remove(&self.local_cursor);
+                    } else {
+                        self.local_selected.insert(self.local_cursor);
+                    }
                 }
-            }
-            Pane::Remote => {
-                if self.remote_selected.contains(&self.remote_cursor) {
-                    self.remote_selected.remove(&self.remote_cursor);
-                } else {
-                    self.remote_selected.insert(self.remote_cursor);
+                Pane::Remote => {
+                    if self.remote_selected.contains(&self.remote_cursor) {
+                        self.remote_selected.remove(&self.remote_cursor);
+                    } else {
+                        self.remote_selected.insert(self.remote_cursor);
+                    }
                 }
             }
         }
     }
 
-    fn prepare_transfer(&mut self) -> Result<()> {
+    fn prepare_transfer(&mut self, mode: ActionMode) -> Result<()> {
         self.transfer_queue.clear();
 
-        for &index in &self.local_selected {
-            if let Some(file) = self.local_files.get(index) {
-                let destination = self.remote_path.join(&file.name);
-                self.transfer_queue.push(TransferItem {
-                    source: file.path.clone(),
-                    destination,
-                    direction: TransferDirection::Upload,
-                });
+        let panes = self.panes_for_mode(mode);
+        if panes.contains(&Pane::Local) {
+            for &index in &self.local_selected {
+                if let Some(file) = self.get_current_local_files().get(index) {
+                    let destination = self.remote_path.join(&file.name);
+                    self.transfer_queue.push(TransferItem {
+                        source: file.path.clone(),
+                        destination,
+                        direction: TransferDirection::Upload,
+                    });
+                }
             }
         }
 
-        for &index in &self.remote_selected {
-            if let Some(file) = self.remote_files.get(index) {
-                let destination = self.local_path.join(&file.name);
-                self.transfer_queue.push(TransferItem {
-                    source: file.path.clone(),
-                    destination,
-                    direction: TransferDirection::Download,
-                });
+        if panes.contains(&Pane::Remote) {
+            for &index in &self.remote_selected {
+                if let Some(file) = self.get_current_remote_files().get(index) {
+                    let destination = self.local_path.join(&file.name);
+                    self.transfer_queue.push(TransferItem {
+                        source: file.path.clone(),
+                        destination,
+                        direction: TransferDirection::Download,
+                    });
+                }
             }
         }
 
@@ -868,12 +913,22 @@ impl App {
         Ok(())
     }
 
-    fn start_search(&mut self) {
+    fn start_search(&mut self, mode: ActionMode) {
         self.search_mode = true;
         self.search_query.clear();
+        self.search_scope = mode;
+        self.search_pane = self.active_pane;
         self.clear_search_filter();
-        self.local_cursor = 0;
-        self.remote_cursor = 0;
+        match mode {
+            ActionMode::Single => match self.active_pane {
+                Pane::Local => self.local_cursor = 0,
+                Pane::Remote => self.remote_cursor = 0,
+            },
+            ActionMode::Dual => {
+                self.local_cursor = 0;
+                self.remote_cursor = 0;
+            }
+        }
     }
 
     fn update_search_filter(&mut self) {
@@ -884,21 +939,23 @@ impl App {
 
         let query = self.search_query.to_lowercase();
 
-        // Filter local files
-        self.filtered_local_files = self
-            .local_files
-            .iter()
-            .filter(|file| file.name.to_lowercase().contains(&query))
-            .cloned()
-            .collect();
+        if self.search_scope == ActionMode::Dual || self.search_pane == Pane::Local {
+            self.filtered_local_files = self
+                .local_files
+                .iter()
+                .filter(|file| file.name.to_lowercase().contains(&query))
+                .cloned()
+                .collect();
+        }
 
-        // Filter remote files
-        self.filtered_remote_files = self
-            .remote_files
-            .iter()
-            .filter(|file| file.name.to_lowercase().contains(&query))
-            .cloned()
-            .collect();
+        if self.search_scope == ActionMode::Dual || self.search_pane == Pane::Remote {
+            self.filtered_remote_files = self
+                .remote_files
+                .iter()
+                .filter(|file| file.name.to_lowercase().contains(&query))
+                .cloned()
+                .collect();
+        }
     }
 
     fn clear_search_filter(&mut self) {
@@ -907,7 +964,9 @@ impl App {
     }
 
     pub fn get_current_local_files(&self) -> &[FileInfo] {
-        if self.search_mode && !self.search_query.is_empty() {
+        if !self.search_query.is_empty()
+            && (self.search_scope == ActionMode::Dual || self.search_pane == Pane::Local)
+        {
             &self.filtered_local_files
         } else {
             &self.local_files
@@ -915,7 +974,9 @@ impl App {
     }
 
     pub fn get_current_remote_files(&self) -> &[FileInfo] {
-        if self.search_mode && !self.search_query.is_empty() {
+        if !self.search_query.is_empty()
+            && (self.search_scope == ActionMode::Dual || self.search_pane == Pane::Remote)
+        {
             &self.filtered_remote_files
         } else {
             &self.remote_files

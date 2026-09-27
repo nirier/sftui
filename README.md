@@ -68,6 +68,8 @@ cargo install --path .
 ### Basic Navigation
 
 - **Tab**: Switch between local and remote panes
+- **a/A**: Toggle action mode (single pane or both panes)
+- In dual mode, cursor movement, directory navigation, selection, transfers, and search operate on both panes.
 - **↑/↓** or **j/k**: Navigate file list (vim-style navigation supported)
 - **h**: Go to the parent directory
 - **l** or **Enter**: Enter the selected directory
@@ -81,9 +83,10 @@ cargo install --path .
 ### Search Function
 
 - **/** : Start search mode
+- Search follows the current action mode: single mode searches the active pane, dual mode searches both panes.
 - **Type**: Enter search query (case-insensitive)
 - **Backspace**: Delete characters from search
-- **Enter**: Exit search mode (keep filtered results)
+- **Enter**: Exit search mode and keep filtered results; navigation actions such as **l** can then enter a matching directory
 - **Esc**: Cancel search and return to full listing
 - **Real-time filtering**: Results update as you type
 
@@ -163,6 +166,7 @@ Host another-server
 | Key        | Action                            |
 | ---------- | --------------------------------- |
 | Tab        | Switch panes                      |
+| a/A        | Toggle single/dual action mode    |
 | ↑/↓ or j/k | Navigate up/down                  |
 | h          | Go to parent directory             |
 | l or Enter | Enter selected directory           |
