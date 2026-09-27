@@ -3,7 +3,7 @@ use crossterm::event::{Event, KeyCode};
 use std::collections::HashSet;
 use std::env;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::sftp::{FileInfo, SftpClient};
 use crate::ssh_config::{SshConfig, SshHost};
@@ -298,7 +298,7 @@ impl App {
             self.remote_files = client.list_directory(&self.remote_path)?;
 
             // Add parent directory entry if not at root
-            if self.remote_path != PathBuf::from("/")
+            if self.remote_path.as_path() != Path::new("/")
                 && let Some(parent) = self.remote_path.parent()
             {
                 self.remote_files.insert(
